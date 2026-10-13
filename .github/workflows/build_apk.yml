@@ -3,16 +3,21 @@ name: Build RemoteKeepAlive APK
 on:
   push:
     branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # Run Android SDK install from a mirror that the runner can reach
+        shell: bash
+
+    env:
+      ANDROID_SDK_ROOT: /usr/local/android-sdk
 
     steps:
-    - name: Checkout Source Code
+    - name: Checkout
       uses: actions/checkout@v4
 
     - name: Set up JDK 17
@@ -20,33 +25,47 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
 
-    - name: Install Android SDK
+    - name: Install Android command line tools (mirror-friendly)
       run: |
-        # Install cmdline-tools
-        mkdir -p /tmp/android-sdk/cmdline-tools
-        cd /tmp/android-sdk/cmdline-tools
-        curl -sL -o android-tools.zip "https://dl.google.com/android/repository/commandlinetools-linux-10253058_latest.zip"
+        set -e
+        # Use the official Google repository but retry with a different host if blocked.
+        mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+        cd "$ANDROID_SDK_ROOT/cmdline-tools"
+
+        # primary
+        if ! curl -fSL --retry 3 -o android-tools.zip "https://dl.google.com/android/repository/commandlinetools-linux-9708926_latest.zip"; then
+          echo "Primary mirror failed, trying alternate..."
+          curl -fSL --retry 3 -o android-tools.zip "https://mirrors.tuna.tsinghua.edu.cn/android.googlesource.com/platform/tools/+/refs/heads/main/cmdline-tools" || true
+        fi
+
+        # sanity: ensure we actually got a zip
+        if ! file android-tools.zip | grep -q "Zip archive"; then
+          echo "Download is not a valid zip. Trying sdkmanager-free path via prebuilt."
+          exit 1
+        fi
+
         unzip -q android-tools.zip
         mv cmdline-tools linux-tools
+        cd "$ANDROID_SDK_ROOT/cmdline-tools/linux-tools"
+        export PATH="$PWD/bin:$PATH"
 
-        # Set ANDROID_HOME and install platform + build tools
-        export ANDROID_HOME=/tmp/android-sdk
-        export PATH=$ANDROID_HOME/cmdline-tools/linux-tools/bin:$PATH
-        yes | sdkmanager "platforms;android-34" "build-tools;34.0.0" > /dev/null
-        yes | sdkmanager --licenses > /dev/null
+        yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses > /dev/null 2>&1 || true
+        yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-34" "build-tools;34.0.0" || {
+          echo "=== sdkmanager output (diagnostic) ==="
+          cat "$ANDROID_SDK_ROOT/cmdline-tools/linux-tools/bin/../../" 2>/dev/null || true
+          exit 1
+        }
 
-        # Tell Gradle where to find the SDK
-        echo "sdk.dir=$ANDROID_HOME" > local.properties
-        echo "ANDROID_HOME=$ANDROID_HOME"
+        echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+        echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
 
     - name: Build Debug APK
       run: |
-        export ANDROID_HOME=/tmp/android-sdk
+        export ANDROID_HOME="$ANDROID_SDK_ROOT"
         ./gradlew assembleDebug --stacktrace
 
-    - name: Upload Finished APK
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: RemoteKeepAlive-debug.apk

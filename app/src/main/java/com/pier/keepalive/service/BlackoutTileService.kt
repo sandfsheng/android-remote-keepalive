@@ -30,7 +30,7 @@ class BlackoutTileService : TileService() {
 
         tile.state = if (isActive) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.label = if (isActive) "最黑省电(运行中)" else "一键最黑"
-        tile.icon = Icon.createWithResource(this, android.R.drawable.ic_lock_power_off)
+        tile.icon = Icon.createWithResource(this, R.drawable.ic_power_vector)
         tile.updateTile()
     }
 }

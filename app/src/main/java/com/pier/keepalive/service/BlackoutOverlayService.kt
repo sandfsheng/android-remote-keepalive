@@ -253,10 +253,10 @@ class BlackoutOverlayService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("顶级灰黑省电中 (快手/抖音远控运行)")
             .setContentText("硬件背光压至极限，触控全穿透。按电源键即可恢复正常。")
-            .setSmallIcon(android.R.drawable.ic_lock_power_off)
+            .setSmallIcon(R.drawable.ic_power_vector)
             .setOngoing(true)
             .setContentIntent(pendingOpen)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "退出省电", pendingStop)
+            .addAction(R.drawable.ic_power_vector, "退出省电", pendingStop)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }

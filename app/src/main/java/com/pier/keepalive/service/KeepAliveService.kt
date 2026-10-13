@@ -117,10 +117,10 @@ class KeepAliveService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Remote Host Daemon Running")
             .setContentText(statusText)
-            .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
+            .setSmallIcon(R.drawable.ic_charging_vector)
             .setOngoing(true)
             .setContentIntent(pendingOpen)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Daemon", pendingStop)
+            .addAction(R.drawable.ic_power_vector, "Stop Daemon", pendingStop)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }

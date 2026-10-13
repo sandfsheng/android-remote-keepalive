@@ -33,9 +33,9 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@android:drawable/ic_lock_power_off"
+        android:icon="@drawable/ic_power_vector"
         android:label="@string/app_name"
-        android:roundIcon="@android:drawable/ic_lock_power_off"
+        android:roundIcon="@drawable/ic_power_vector"
         android:supportsRtl="true"
         android:theme="@style/Theme.AndroidRemoteKeepAlive">
 
@@ -88,7 +88,7 @@
         <!-- Quick Settings Tile: Pull-down notification shade one-tap blackout -->
         <service
             android:name=".service.BlackoutTileService"
-            android:icon="@android:drawable/ic_lock_power_off"
+            android:icon="@drawable/ic_power_vector"
             android:label="一键最黑"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
             android:exported="true">
