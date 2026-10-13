@@ -55,21 +55,28 @@ class KeepAliveService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
-        acquireLocks()
-        registerNetworkMonitor()
-        startWatchdog()
-        isDaemonRunning = true
+        try {
+            createNotificationChannel()
+            acquireLocks()
+            registerNetworkMonitor()
+            startWatchdog()
+            isDaemonRunning = true
+        } catch (e: Exception) {
+            Log.e(TAG, "onCreate error: ${e.message}", e)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
+        try {
+            if (intent?.action == ACTION_STOP) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            startForeground(NOTIFICATION_ID, buildNotification("Daemon active | Network & CPU locked"))
+        } catch (e: Exception) {
+            Log.e(TAG, "onStartCommand error: ${e.message}", e)
         }
-
-        startForeground(NOTIFICATION_ID, buildNotification("Daemon active | Network & CPU locked"))
         return START_STICKY
     }
 
@@ -119,40 +126,41 @@ class KeepAliveService : Service() {
     }
 
     private fun acquireLocks() {
-        // CPU Partial WakeLock: Keep CPU at base clock, never enter deep sleep
-        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
-        if (wakeLock == null && pm != null) {
-            wakeLock = pm.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "RemoteKeepAlive::CpuLock"
-            ).apply {
-                setReferenceCounted(false)
-                acquire()
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (wakeLock == null && pm != null) {
+                wakeLock = pm.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "RemoteKeepAlive::CpuLock"
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+                Log.d(TAG, "Acquired PARTIAL_WAKE_LOCK")
             }
-            Log.d(TAG, "Acquired PARTIAL_WAKE_LOCK")
-        }
 
-        // WiFi High Performance Lock: Prevent Wi-Fi radio power-save DTIM sleep
-        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-        if (wifiLock == null && wm != null) {
-            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-            } else {
-                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            if (wifiLock == null && wm != null) {
+                val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                } else {
+                    WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                }
+                wifiLock = wm.createWifiLock(mode, "RemoteKeepAlive::HighPerfWifi").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+                Log.d(TAG, "Acquired WiFi lock")
             }
-            wifiLock = wm.createWifiLock(mode, "RemoteKeepAlive::HighPerfWifi").apply {
-                setReferenceCounted(false)
-                acquire()
-            }
-            Log.d(TAG, "Acquired WIFI_MODE_FULL_HIGH_PERF / LOW_LATENCY")
-        }
 
-        // Multicast Lock for local discovery
-        if (multicastLock == null && wm != null) {
-            multicastLock = wm.createMulticastLock("RemoteKeepAlive::MulticastLock").apply {
-                setReferenceCounted(false)
-                acquire()
+            if (multicastLock == null && wm != null) {
+                multicastLock = wm.createMulticastLock("RemoteKeepAlive::MulticastLock").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "acquireLocks error: ${e.message}", e)
         }
     }
 
@@ -166,26 +174,30 @@ class KeepAliveService : Service() {
             multicastLock = null
             Log.d(TAG, "Released all hardware locks")
         } catch (e: Exception) {
-            Log.e(TAG, "Error releasing locks", e)
+            Log.e(TAG, "releaseLocks error: ${e.message}")
         }
     }
 
     private fun registerNetworkMonitor() {
-        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        val builder = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        try {
+            connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val builder = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 
-        networkCallback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                Log.i(TAG, "Active network available: $network")
+            networkCallback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    Log.i(TAG, "Active network available: $network")
+                }
+
+                override fun onLost(network: Network) {
+                    Log.w(TAG, "Network connection dropped: $network")
+                }
             }
 
-            override fun onLost(network: Network) {
-                Log.w(TAG, "Network connection dropped: $network. Monitoring recovery...")
-            }
+            connectivityManager?.registerNetworkCallback(builder.build(), networkCallback!!)
+        } catch (e: Exception) {
+            Log.e(TAG, "registerNetworkMonitor error: ${e.message}", e)
         }
-
-        connectivityManager?.registerNetworkCallback(builder.build(), networkCallback!!)
     }
 
     private fun unregisterNetworkMonitor() {
@@ -193,42 +205,45 @@ class KeepAliveService : Service() {
             try {
                 connectivityManager?.unregisterNetworkCallback(it)
             } catch (e: Exception) {
-                Log.e(TAG, "Error unregistering network callback", e)
+                Log.e(TAG, "unregisterNetworkMonitor error: ${e.message}")
             }
         }
     }
 
-    /**
-     * Watchdog loop: Checks Tailscale and RustDesk execution status every 20 seconds.
-     * Relaunches them if terminated by OEM battery management.
-     */
     private fun startWatchdog() {
         watchdogJob = serviceScope.launch {
             while (isActive) {
-                val tailscaleAlive = SystemUtil.isAppRunning(applicationContext, SystemUtil.PACKAGE_TAILSCALE)
-                val rustdeskAlive = SystemUtil.isAppRunning(applicationContext, SystemUtil.PACKAGE_RUSTDESK)
+                try {
+                    val tailscaleAlive = SystemUtil.isAppRunning(applicationContext, SystemUtil.PACKAGE_TAILSCALE)
+                    val rustdeskAlive = SystemUtil.isAppRunning(applicationContext, SystemUtil.PACKAGE_RUSTDESK)
 
-                Log.d(TAG, "Watchdog status: Tailscale=$tailscaleAlive, RustDesk=$rustdeskAlive")
+                    Log.d(TAG, "Watchdog: Tailscale=$tailscaleAlive, RustDesk=$rustdeskAlive")
 
-                if (!tailscaleAlive && SystemUtil.isPackageInstalled(applicationContext, SystemUtil.PACKAGE_TAILSCALE)) {
-                    Log.w(TAG, "Tailscale stopped. Reviving via launch intent...")
-                    SystemUtil.launchPackage(applicationContext, SystemUtil.PACKAGE_TAILSCALE)
+                    if (!tailscaleAlive && SystemUtil.isPackageInstalled(applicationContext, SystemUtil.PACKAGE_TAILSCALE)) {
+                        Log.w(TAG, "Tailscale stopped. Reviving...")
+                        SystemUtil.launchPackage(applicationContext, SystemUtil.PACKAGE_TAILSCALE)
+                    }
+
+                    if (!rustdeskAlive && SystemUtil.isPackageInstalled(applicationContext, SystemUtil.PACKAGE_RUSTDESK)) {
+                        Log.w(TAG, "RustDesk stopped. Reviving...")
+                        SystemUtil.launchPackage(applicationContext, SystemUtil.PACKAGE_RUSTDESK)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Watchdog tick error: ${e.message}")
                 }
-
-                if (!rustdeskAlive && SystemUtil.isPackageInstalled(applicationContext, SystemUtil.PACKAGE_RUSTDESK)) {
-                    Log.w(TAG, "RustDesk stopped. Reviving via launch intent...")
-                    SystemUtil.launchPackage(applicationContext, SystemUtil.PACKAGE_RUSTDESK)
-                }
-
-                delay(20000L) // 20s poll
+                delay(20000L)
             }
         }
     }
 
     override fun onDestroy() {
-        watchdogJob?.cancel()
-        releaseLocks()
-        unregisterNetworkMonitor()
+        try {
+            watchdogJob?.cancel()
+            releaseLocks()
+            unregisterNetworkMonitor()
+        } catch (e: Exception) {
+            Log.e(TAG, "onDestroy error: ${e.message}")
+        }
         isDaemonRunning = false
         super.onDestroy()
     }

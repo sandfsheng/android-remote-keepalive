@@ -48,28 +48,36 @@ class BlackoutOverlayService : Service() {
         const val KEY_POWER_BUTTON_RESTORE = "key_power_button_restore"
         const val KEY_DOUBLE_TAP_RESTORE = "key_double_tap_restore"
         const val KEY_TOUCH_PASSTHROUGH = "key_touch_passthrough"
-        const val KEY_DIM_ALPHA_PERCENT = "key_dim_alpha_percent" // 80 - 99% 顶级灰黑调节
+        const val KEY_DIM_ALPHA_PERCENT = "key_dim_alpha_percent"
 
         @Volatile
         var isOverlayActive: Boolean = false
             private set
 
         fun startBlackout(context: Context) {
-            val intent = Intent(context, BlackoutOverlayService::class.java).apply {
-                action = ACTION_START
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                val intent = Intent(context, BlackoutOverlayService::class.java).apply {
+                    action = ACTION_START
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start blackout service: ${e.message}")
             }
         }
 
         fun stopBlackout(context: Context) {
-            val intent = Intent(context, BlackoutOverlayService::class.java).apply {
-                action = ACTION_STOP
+            try {
+                val intent = Intent(context, BlackoutOverlayService::class.java).apply {
+                    action = ACTION_STOP
+                }
+                context.startService(intent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to stop blackout service: ${e.message}")
             }
-            context.startService(intent)
         }
     }
 
@@ -77,30 +85,38 @@ class BlackoutOverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
-        registerScreenStateReceiver()
-        backupAndEnforceSystemBrightness()
+        try {
+            createNotificationChannel()
+            registerScreenStateReceiver()
+            backupAndEnforceSystemBrightness()
+        } catch (e: Exception) {
+            Log.e(TAG, "onCreate error: ${e.message}", e)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                removeBlackoutOverlay()
-                restoreSystemBrightness()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+        try {
+            when (intent?.action) {
+                ACTION_STOP -> {
+                    removeBlackoutOverlay()
+                    restoreSystemBrightness()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+                else -> {
+                    startForeground(NOTIFICATION_ID, buildNotification())
+                    showBlackoutOverlay()
+                }
             }
-            else -> {
-                startForeground(NOTIFICATION_ID, buildNotification())
-                showBlackoutOverlay()
-            }
+        } catch (e: Exception) {
+            Log.e(TAG, "onStartCommand error: ${e.message}", e)
         }
         return START_STICKY
     }
 
     private fun backupAndEnforceSystemBrightness() {
-        if (Settings.System.canWrite(this)) {
-            try {
+        try {
+            if (Settings.System.canWrite(this)) {
                 originalSystemBrightness = Settings.System.getInt(
                     contentResolver,
                     Settings.System.SCREEN_BRIGHTNESS,
@@ -123,15 +139,15 @@ class BlackoutOverlayService : Service() {
                     1
                 )
                 Log.i(TAG, "Hardware brightness clamped to floor 1.")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to clamp system brightness: ${e.message}")
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to clamp system brightness: ${e.message}")
         }
     }
 
     private fun restoreSystemBrightness() {
-        if (Settings.System.canWrite(this)) {
-            try {
+        try {
+            if (Settings.System.canWrite(this)) {
                 Settings.System.putInt(
                     contentResolver,
                     Settings.System.SCREEN_BRIGHTNESS,
@@ -143,9 +159,9 @@ class BlackoutOverlayService : Service() {
                     originalBrightnessMode
                 )
                 Log.i(TAG, "Restored original system brightness: $originalSystemBrightness")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to restore system brightness", e)
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to restore system brightness: ${e.message}")
         }
     }
 
@@ -157,26 +173,37 @@ class BlackoutOverlayService : Service() {
 
         powerScreenReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                val action = intent?.action ?: return
-                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val powerRestoreEnabled = prefs.getBoolean(KEY_POWER_BUTTON_RESTORE, true)
+                try {
+                    val action = intent?.action ?: return
+                    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val powerRestoreEnabled = prefs.getBoolean(KEY_POWER_BUTTON_RESTORE, true)
 
-                if (!powerRestoreEnabled || !isOverlayActive) return
+                    if (!powerRestoreEnabled || !isOverlayActive) return
 
-                if (action == Intent.ACTION_SCREEN_OFF) {
-                    Log.i(TAG, "SCREEN_OFF caught. SafetyRecoveryManager restoring display...")
-                    SafetyRecoveryManager.executeEmergencyRestore(this@BlackoutOverlayService, "Power Button Screen Off")
+                    if (action == Intent.ACTION_SCREEN_OFF) {
+                        Log.i(TAG, "SCREEN_OFF caught. SafetyRecoveryManager restoring display...")
+                        SafetyRecoveryManager.executeEmergencyRestore(this@BlackoutOverlayService, "Power Button Screen Off")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "screen receiver error: ${e.message}")
                 }
             }
         }
 
-        // Android 13+ (API 33+) 兼容性：系统广播使用 RECEIVER_NOT_EXPORTED
-        ContextCompat.registerReceiver(
-            this,
-            powerScreenReceiver!!,
-            filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.registerReceiver(
+                    this,
+                    powerScreenReceiver!!,
+                    filter,
+                    ContextCompat.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                registerReceiver(powerScreenReceiver, filter)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register screen state receiver: ${e.message}")
+        }
     }
 
     private fun unregisterScreenStateReceiver() {
@@ -184,7 +211,7 @@ class BlackoutOverlayService : Service() {
             try {
                 unregisterReceiver(it)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to unregister powerScreenReceiver", e)
+                Log.e(TAG, "Failed to unregister receiver: ${e.message}")
             }
         }
     }
@@ -238,68 +265,68 @@ class BlackoutOverlayService : Service() {
     private fun showBlackoutOverlay() {
         if (blackoutView != null) return
 
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
+        try {
+            windowManager = getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
 
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val alphaPercent = prefs.getInt(KEY_DIM_ALPHA_PERCENT, 93).coerceIn(80, 99)
-        val touchPassthrough = prefs.getBoolean(KEY_TOUCH_PASSTHROUGH, true)
-        val doubleTapEnabled = prefs.getBoolean(KEY_DOUBLE_TAP_RESTORE, true)
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val alphaPercent = prefs.getInt(KEY_DIM_ALPHA_PERCENT, 93).coerceIn(80, 99)
+            val touchPassthrough = prefs.getBoolean(KEY_TOUCH_PASSTHROUGH, true)
+            val doubleTapEnabled = prefs.getBoolean(KEY_DOUBLE_TAP_RESTORE, true)
 
-        var windowFlags = (
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-            WindowManager.LayoutParams.FLAG_FULLSCREEN or
-            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        )
+            var windowFlags = (
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_FULLSCREEN or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
 
-        if (touchPassthrough) {
-            windowFlags = windowFlags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        }
+            if (touchPassthrough) {
+                windowFlags = windowFlags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            }
 
-        val layoutParams = WindowManager.LayoutParams().apply {
-            type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            format = PixelFormat.TRANSLUCENT
-            gravity = Gravity.TOP or Gravity.START
-            width = WindowManager.LayoutParams.MATCH_PARENT
-            height = WindowManager.LayoutParams.MATCH_PARENT
-            screenBrightness = 0.001f
-            flags = windowFlags
-        }
+            val layoutParams = WindowManager.LayoutParams().apply {
+                type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                format = PixelFormat.TRANSLUCENT
+                gravity = Gravity.TOP or Gravity.START
+                width = WindowManager.LayoutParams.MATCH_PARENT
+                height = WindowManager.LayoutParams.MATCH_PARENT
+                screenBrightness = 0.001f
+                flags = windowFlags
+            }
 
-        val alphaValue = (alphaPercent / 100.0 * 255.0).toInt().coerceIn(0, 255)
-        val ultraDimColor = Color.argb(alphaValue, 0, 0, 0)
+            val alphaValue = (alphaPercent / 100.0 * 255.0).toInt().coerceIn(0, 255)
+            val ultraDimColor = Color.argb(alphaValue, 0, 0, 0)
 
-        val overlay = View(this).apply {
-            setBackgroundColor(ultraDimColor)
+            val overlay = View(this).apply {
+                setBackgroundColor(ultraDimColor)
 
-            if (!touchPassthrough && doubleTapEnabled) {
-                setOnTouchListener { _, event ->
-                    if (event.action == MotionEvent.ACTION_DOWN) {
-                        val screenWidth = resources.displayMetrics.widthPixels
-                        val touchX = event.rawX
-                        val touchY = event.rawY
-                        if (touchX > (screenWidth - 250) && touchY < 250) {
-                            val now = System.currentTimeMillis()
-                            if (now - lastTapTime < 500) {
-                                stopBlackout(this@BlackoutOverlayService)
-                                return@setOnTouchListener true
+                if (!touchPassthrough && doubleTapEnabled) {
+                    setOnTouchListener { _, event ->
+                        if (event.action == MotionEvent.ACTION_DOWN) {
+                            val screenWidth = resources.displayMetrics.widthPixels
+                            val touchX = event.rawX
+                            val touchY = event.rawY
+                            if (touchX > (screenWidth - 250) && touchY < 250) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastTapTime < 500) {
+                                    stopBlackout(this@BlackoutOverlayService)
+                                    return@setOnTouchListener true
+                                }
+                                lastTapTime = now
                             }
-                            lastTapTime = now
                         }
+                        false
                     }
-                    false
                 }
             }
-        }
 
-        try {
             windowManager?.addView(overlay, layoutParams)
             blackoutView = overlay
             isOverlayActive = true
             Log.i(TAG, "Ultra-dim overlay attached: Alpha=${alphaPercent}%, Passthrough=$touchPassthrough")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to attach blackout overlay", e)
+            Log.e(TAG, "Failed to attach blackout overlay: ${e.message}", e)
         }
     }
 
@@ -309,7 +336,7 @@ class BlackoutOverlayService : Service() {
                 windowManager?.removeView(blackoutView)
                 Log.i(TAG, "Ultra-dim overlay detached.")
             } catch (e: Exception) {
-                Log.e(TAG, "Error removing blackout view", e)
+                Log.e(TAG, "Error removing overlay: ${e.message}")
             } finally {
                 blackoutView = null
                 isOverlayActive = false
@@ -318,9 +345,13 @@ class BlackoutOverlayService : Service() {
     }
 
     override fun onDestroy() {
-        unregisterScreenStateReceiver()
-        removeBlackoutOverlay()
-        restoreSystemBrightness()
+        try {
+            unregisterScreenStateReceiver()
+            removeBlackoutOverlay()
+            restoreSystemBrightness()
+        } catch (e: Exception) {
+            Log.e(TAG, "onDestroy error: ${e.message}")
+        }
         super.onDestroy()
     }
 }

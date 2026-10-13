@@ -13,14 +13,12 @@ import com.pier.keepalive.service.BlackoutOverlayService
 
 /**
  * SafetyRecoveryManager:
- * Comprehensive multi-tiered fail-safe engine to ensure the device NEVER
- * becomes an unresponsive black brick.
+ * Multi-tiered fail-safe engine to ensure the device never becomes a brick.
  *
- * Tier 1: Hardware Power Button / Volume Keys
- * Tier 2: USB Charger Plug-in Instant Recovery
- * Tier 3: Process Crash / UncaughtException Auto-Restore
- * Tier 4: Out-of-band ADB Emergency Broadcast
- * Tier 5: Cold Boot Fail-safe (Never auto-black on boot)
+ * - Tier 1: Power button / Volume keys
+ * - Tier 2: USB charger plug-in
+ * - Tier 3: UncaughtException auto-restore
+ * - Tier 4: ADB emergency broadcast
  */
 object SafetyRecoveryManager {
 
@@ -30,14 +28,13 @@ object SafetyRecoveryManager {
     private var emergencyReceiver: BroadcastReceiver? = null
     private var isCrashHandlerInstalled = false
 
-    /**
-     * Initializes global fail-safe hooks:
-     * 1. UncaughtExceptionHandler (recovers screen if app crashes)
-     * 2. Emergency Broadcast & Charger Plug-in Receiver
-     */
     fun init(context: Context) {
-        installCrashHandler(context.applicationContext)
-        registerEmergencyReceiver(context.applicationContext)
+        try {
+            installCrashHandler(context.applicationContext)
+            registerEmergencyReceiver(context.applicationContext)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to init SafetyRecoveryManager: ${e.message}")
+        }
     }
 
     private fun installCrashHandler(appContext: Context) {
@@ -45,7 +42,7 @@ object SafetyRecoveryManager {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
 
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            Log.e(TAG, "FATAL CRASH detected! Executing emergency screen restore...", throwable)
+            Log.e(TAG, "FATAL CRASH detected. Executing emergency screen restore...", throwable)
             try {
                 executeEmergencyRestore(appContext, "Crash Guardian")
             } catch (e: Exception) {
@@ -63,7 +60,7 @@ object SafetyRecoveryManager {
 
         val filter = IntentFilter().apply {
             addAction(ACTION_EMERGENCY_RESTORE)
-            addAction(Intent.ACTION_POWER_CONNECTED) // 插上充电线瞬间唤醒屏幕！
+            addAction(Intent.ACTION_POWER_CONNECTED)
             addAction(Intent.ACTION_POWER_DISCONNECTED)
         }
 
@@ -84,20 +81,23 @@ object SafetyRecoveryManager {
             }
         }
 
-        // Android 13+ (API 33+) 兼容性修复：指定 RECEIVER_EXPORTED 以接收来自 ADB shell 的广播
-        ContextCompat.registerReceiver(
-            context,
-            emergencyReceiver!!,
-            filter,
-            ContextCompat.RECEIVER_EXPORTED
-        )
-        Log.i(TAG, "Emergency receiver registered with RECEIVER_EXPORTED.")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.registerReceiver(
+                    context,
+                    emergencyReceiver!!,
+                    filter,
+                    ContextCompat.RECEIVER_EXPORTED
+                )
+            } else {
+                context.registerReceiver(emergencyReceiver, filter)
+            }
+            Log.i(TAG, "Emergency receiver registered.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register emergency receiver: ${e.message}")
+        }
     }
 
-    /**
-     * Volume Key Safety Escape:
-     * If user presses Volume Up/Down while in blackout, triggers restore.
-     */
     fun handleKeyEvent(keyCode: Int, action: Int, context: Context): Boolean {
         if (action == KeyEvent.ACTION_DOWN) {
             if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
@@ -111,29 +111,22 @@ object SafetyRecoveryManager {
         return false
     }
 
-    /**
-     * Global Emergency Restore Core:
-     * Guaranteed cleanup across all display controllers.
-     */
     fun executeEmergencyRestore(context: Context, reason: String) {
         Log.w(TAG, ">>> EXECUTING EMERGENCY SCREEN RESTORE <<< Reason: $reason")
+        try {
+            BlackoutOverlayService.stopBlackout(context)
+            DisplayPowerHelper.turnOnPhysicalDisplay(context)
+            RootUtil.restoreHardwareBacklight()
 
-        // 1. Terminate Blackout Overlay Service
-        BlackoutOverlayService.stopBlackout(context)
-
-        // 2. Power on physical display via SurfaceControl
-        DisplayPowerHelper.turnOnPhysicalDisplay(context)
-
-        // 3. Fallback: restore root hardware backlight if root was touched
-        RootUtil.restoreHardwareBacklight()
-
-        // 4. Force wake up the screen via PowerManager
-        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        @Suppress("DEPRECATION")
-        val wakeLock = pm?.newWakeLock(
-            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-            "RemoteKeepAlive::EmergencyWake"
-        )
-        wakeLock?.acquire(3000L) // 3 seconds full wake
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            @Suppress("DEPRECATION")
+            val wakeLock = pm?.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "RemoteKeepAlive::EmergencyWake"
+            )
+            wakeLock?.acquire(3000L)
+        } catch (e: Exception) {
+            Log.e(TAG, "Emergency restore failed", e)
+        }
     }
 }

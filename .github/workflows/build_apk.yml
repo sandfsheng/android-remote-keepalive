@@ -5,7 +5,7 @@ on:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
-  workflow_dispatch: # 支持手动点击一键编译
+  workflow_dispatch:
 
 jobs:
   build:
@@ -22,8 +22,18 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Grant Execute Permission to Gradlew
-      run: chmod +x gradlew || true
+    - name: Set up Android SDK
+      uses: android/setup-android@4
+      with:
+        android-version: '34'
+        sdk-tools:
+          - platform-tools
+          - build-tools;34.0.0
+          - platforms;android-34
+
+    - name: Accept Android SDK licenses
+      run: |
+        yes | $ANDROID_HOME/sdkmanager --licenses > /dev/null || true
 
     - name: Build Debug APK
       run: ./gradlew assembleDebug --stacktrace
