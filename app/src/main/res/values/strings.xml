@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">RemoteKeepAlive</string>
+    <string name="accessibility_service_label">Remote KeepAlive Host Controller</string>
+    <string name="accessibility_service_desc">Assists in background wake-up, touch event routing, and automated recovery for RustDesk and Tailscale services.</string>
+    
+    <string name="channel_keepalive_name">Remote KeepAlive Daemon</string>
+    <string name="channel_keepalive_desc">Maintains high-performance networking and prevents CPU sleep</string>
+    <string name="channel_blackout_name">Blackout Overlay Service</string>
+    <string name="channel_blackout_desc">Maintains zero-brightness blackout overlay for display power saving</string>
+</resources>
